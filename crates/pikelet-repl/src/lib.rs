@@ -24,6 +24,10 @@ pub struct Opts {
     #[structopt(long = "prompt", default_value = "Pikelet> ")]
     pub prompt: String,
 
+    /// The prompt to display for multiline expressions
+    #[structopt(long = "multiline-prompt", default_value = "       | ")]
+    pub multiline_prompt: String,
+
     /// Disable the welcome banner on startup
     #[structopt(long = "no-banner")]
     pub no_banner: bool,
@@ -123,9 +127,42 @@ pub fn run(opts: Opts) -> Result<(), Error> {
         }
     }
 
+    let mut multiline = String::from("");
+    let mut is_multiline = false;
+
     loop {
         match interface.read_line()? {
             ReadResult::Input(line) => {
+
+                if multiline.is_empty() { // first attempt
+                    is_multiline = match line.parse() {
+                        Ok(ReplCommand::Normalize(_)) => true,
+                        Ok(_) => false,
+                        Err(_) => false,
+                    };
+                }
+
+                if is_multiline {
+                    if line.ends_with(";;") {
+                        let (line, _) = line.split_at(line.len() - 2);
+                        multiline.push_str(&line);
+                        interface.set_prompt(&opts.prompt)?;
+                    } else {
+                        multiline.push_str(&line);
+                        interface.set_prompt(&opts.multiline_prompt)?;
+                        continue;
+                    }
+                } else {
+                    multiline.push_str(&line);
+                }
+
+                // treat it as whole input
+                let line = multiline.clone();
+                
+                // reset variables
+                multiline.clear();
+                is_multiline = false;
+
                 if !opts.no_history && !line.trim().is_empty() {
                     interface.add_history_unique(line.clone());
                 }
@@ -194,8 +231,10 @@ pub enum ReplCommand {
     /// :let <name> = <term>
     /// ```
     Let(String, String),
-    ///  No command
+    /// No command
     NoOp,
+    /// Multiline expression
+    MultilineExpr, 
     /// Quit the REPL
     ///
     /// ```text
@@ -339,6 +378,7 @@ fn eval_print(
         },
 
         ReplCommand::NoOp => {},
+        ReplCommand::MultilineExpr => {},
         ReplCommand::Quit => return Ok(ControlFlow::Break),
     }
 
